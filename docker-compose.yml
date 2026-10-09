@@ -1,0 +1,86 @@
+name: notes
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    container_name: notes-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      # ":80" serves plain HTTP on any host; set a real domain in .env on the
+      # server and Caddy obtains a Let's Encrypt certificate for it.
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - backend
+    depends_on:
+      notes-api:
+        condition: service_healthy
+
+  notes-api:
+    build: ./notes-api
+    image: docker.io/boti13/notes-api:2.0.0
+    container_name: notes-api
+    init: true
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Reached through the database container's name on the shared network.
+      PGHOST: notes-db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-notes}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      PGDATABASE: ${POSTGRES_DB:-notes}
+    networks:
+      - backend
+      - database
+    depends_on:
+      notes-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      start_interval: 2s
+      retries: 3
+
+  notes-db:
+    image: postgres:18-alpine
+    container_name: notes-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-notes}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-notes}
+    volumes:
+      # Postgres 18 images keep PGDATA in a versioned subdirectory of /var/lib/postgresql.
+      - notes-db-data:/var/lib/postgresql
+    networks:
+      - database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      start_interval: 1s
+      retries: 5
+
+networks:
+  backend:
+  # internal: no route out of this network, so the database is reachable only
+  # by containers attached to it (the API) and never from the host or internet.
+  database:
+    internal: true
+
+volumes:
+  notes-db-data:
+  caddy-data:
+  caddy-config:

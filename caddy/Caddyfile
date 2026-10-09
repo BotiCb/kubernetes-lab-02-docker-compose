@@ -1,0 +1,13 @@
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	reverse_proxy notes-api:3000 {
+		health_uri /health
+		health_interval 30s
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
